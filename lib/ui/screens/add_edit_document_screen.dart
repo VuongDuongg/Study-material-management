@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/database/app_database.dart';
 import '../../logic/providers/auth_provider.dart';
+import '../../logic/providers/cloud_document_provider.dart';
 import '../../logic/providers/document_provider.dart';
 import '../../logic/services/cloud_document_service.dart';
 
@@ -92,20 +93,10 @@ class _AddEditDocumentScreenState extends State<AddEditDocumentScreen> {
 
     try {
       if (widget.documentToEdit == null) {
-        // 1. Thêm vào Database cục bộ SQLite (Drift)
-        await provider.addDocument(
-          title: _titleController.text,
-          subject: _subjectController.text,
-          category: _selectedCategory,
-          filePath: _filePathController.text,
-          createdAt: _selectedDate,
-        );
-
-        // 2. Đồng bộ lên Cloud Supabase nếu đã đăng nhập tài khoản
         if (currentUser != null) {
+          // Khi đã đăng nhập: Lưu trực tiếp lên Cloud Supabase (phân quyền theo tài khoản)
           try {
             final cloudService = CloudDocumentService();
-            // Nếu người dùng chọn file thật
             final localFile = File(_filePathController.text.trim());
             if (await localFile.exists()) {
               await cloudService.uploadAndCreateDocument(
@@ -115,7 +106,6 @@ class _AddEditDocumentScreenState extends State<AddEditDocumentScreen> {
                 file: localFile,
               );
             } else {
-              // Nếu là đường dẫn URL hoặc text path
               final supabase = Supabase.instance.client;
               final newDocId = const Uuid().v4();
               await supabase.from('documents').insert({
@@ -129,10 +119,23 @@ class _AddEditDocumentScreenState extends State<AddEditDocumentScreen> {
                 'mime_type': 'text/plain',
               });
             }
-            debugPrint('>>> [SUPABASE SYNC THÀNH CÔNG] Đã đẩy tài liệu lên Supabase documents!');
+            debugPrint('>>> [SUPABASE SYNC THÀNH CÔNG] Đã lưu tài liệu lên Supabase!');
+            if (mounted) {
+              await context.read<CloudDocumentProvider>().loadDocumentsForUser(currentUser.uid);
+            }
           } catch (cloudErr) {
             debugPrint('>>> [SUPABASE SYNC LỖI KHI LƯU DOC]: $cloudErr');
+            rethrow;
           }
+        } else {
+          // Khi chưa đăng nhập (khách offline): Lưu vào CSDL cục bộ SQLite của máy
+          await provider.addDocument(
+            title: _titleController.text,
+            subject: _subjectController.text,
+            category: _selectedCategory,
+            filePath: _filePathController.text,
+            createdAt: _selectedDate,
+          );
         }
       } else {
         // Cập nhật cục bộ

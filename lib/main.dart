@@ -1,22 +1,62 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'data/database/app_database.dart';
+import 'data/repositories/document_repository.dart';
+import 'firebase_options.dart';
+import 'logic/providers/auth_provider.dart';
+import 'logic/providers/cloud_document_provider.dart';
 import 'logic/providers/document_provider.dart';
 import 'logic/providers/theme_provider.dart';
+import 'logic/services/document_service.dart';
+import 'supabase_config.dart';
 import 'ui/screens/home_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Khởi tạo Firebase với fallback an toàn
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    debugPrint('Firebase initializeApp note: $e');
+  }
+
+  // Khởi tạo Supabase
+  try {
+    await Supabase.initialize(
+      url: SupabaseConfig.supabaseUrl,
+      publishableKey: SupabaseConfig.supabaseAnonKey,
+    );
+  } catch (e) {
+    debugPrint('Supabase initialize note: $e');
+  }
 
   // Khởi tạo Database cục bộ
   final database = AppDatabase();
+  final documentRepo = DocumentRepositoryImpl();
+  final documentService = DocumentService(repository: documentRepo);
 
   runApp(
     MultiProvider(
       providers: [
         Provider<AppDatabase>.value(value: database),
+        Provider<DocumentRepository>.value(value: documentRepo),
+        Provider<DocumentService>.value(value: documentService),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => DocumentProvider(database)),
+        ChangeNotifierProxyProvider<AuthProvider, CloudDocumentProvider>(
+          create: (_) => CloudDocumentProvider(documentService),
+          update: (_, auth, cloudDocs) {
+            final provider = cloudDocs ?? CloudDocumentProvider(documentService);
+            provider.loadDocumentsForUser(auth.currentUser?.uid);
+            return provider;
+          },
+        ),
       ],
       child: const StudyDocManagerApp(),
     ),

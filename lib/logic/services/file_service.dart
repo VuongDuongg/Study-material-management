@@ -10,13 +10,20 @@ class FileService {
     try {
       if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
         final uri = Uri.parse(trimmed);
-        if (await canLaunchUrl(uri)) {
-          return await launchUrl(uri, mode: LaunchMode.externalApplication);
+        try {
+          return await launchUrl(
+            uri,
+            mode: LaunchMode.externalApplication,
+          );
+        } catch (_) {
+          return await launchUrl(
+            uri,
+            mode: LaunchMode.platformDefault,
+          );
         }
       } else {
-        // Trên web hoặc native, thử mở theo URI
         final uri = Uri.tryParse(trimmed);
-        if (uri != null && await canLaunchUrl(uri)) {
+        if (uri != null) {
           return await launchUrl(uri);
         }
       }

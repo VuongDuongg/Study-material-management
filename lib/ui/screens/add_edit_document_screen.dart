@@ -1,8 +1,13 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 import '../../data/database/app_database.dart';
+import '../../logic/providers/auth_provider.dart';
 import '../../logic/providers/document_provider.dart';
+import '../../logic/services/cloud_document_service.dart';
 
 class AddEditDocumentScreen extends StatefulWidget {
   final Document? documentToEdit;
@@ -82,10 +87,12 @@ class _AddEditDocumentScreenState extends State<AddEditDocumentScreen> {
 
     setState(() => _isSaving = true);
     final provider = context.read<DocumentProvider>();
+    final authProvider = context.read<AuthProvider>();
+    final currentUser = authProvider.currentUser;
 
     try {
       if (widget.documentToEdit == null) {
-        // Thêm mới
+        // 1. Thêm vào Database cục bộ SQLite (Drift)
         await provider.addDocument(
           title: _titleController.text,
           subject: _subjectController.text,
@@ -93,8 +100,42 @@ class _AddEditDocumentScreenState extends State<AddEditDocumentScreen> {
           filePath: _filePathController.text,
           createdAt: _selectedDate,
         );
+
+        // 2. Đồng bộ lên Cloud Supabase nếu đã đăng nhập tài khoản
+        if (currentUser != null) {
+          try {
+            final cloudService = CloudDocumentService();
+            // Nếu người dùng chọn file thật
+            final localFile = File(_filePathController.text.trim());
+            if (await localFile.exists()) {
+              await cloudService.uploadAndCreateDocument(
+                ownerId: currentUser.uid,
+                title: _titleController.text.trim(),
+                description: 'Danh mục: $_selectedCategory, Môn: ${_subjectController.text.trim()}',
+                file: localFile,
+              );
+            } else {
+              // Nếu là đường dẫn URL hoặc text path
+              final supabase = Supabase.instance.client;
+              final newDocId = const Uuid().v4();
+              await supabase.from('documents').insert({
+                'id': newDocId,
+                'owner_id': currentUser.uid,
+                'title': _titleController.text.trim(),
+                'description': 'Danh mục: $_selectedCategory, Môn: ${_subjectController.text.trim()}',
+                'file_url': _filePathController.text.trim().isNotEmpty ? _filePathController.text.trim() : 'https://placeholder.local',
+                'storage_path': 'documents/${currentUser.uid}/$newDocId/doc.dat',
+                'file_size': 1024,
+                'mime_type': 'text/plain',
+              });
+            }
+            debugPrint('>>> [SUPABASE SYNC THÀNH CÔNG] Đã đẩy tài liệu lên Supabase documents!');
+          } catch (cloudErr) {
+            debugPrint('>>> [SUPABASE SYNC LỖI KHI LƯU DOC]: $cloudErr');
+          }
+        }
       } else {
-        // Cập nhật
+        // Cập nhật cục bộ
         final updated = widget.documentToEdit!.copyWith(
           title: _titleController.text.trim(),
           subject: _subjectController.text.trim(),
